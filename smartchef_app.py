@@ -3,7 +3,6 @@ import os
 import re
 import requests
 import subprocess
-import emoji
 from dotenv import load_dotenv
 
 # 页面设置
@@ -60,8 +59,7 @@ def extract_keywords_from_recipe(recipe_text):
 
     return list(dict.fromkeys(dish_keywords))[:3] or ["Healthy Recipe"]
 
-def remove_emojis(text):
-    return emoji.replace_emoji(text, replace='')
+
 
 
 # 视频推荐
