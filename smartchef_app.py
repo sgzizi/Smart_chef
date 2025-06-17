@@ -3,6 +3,7 @@ import os
 import re
 import requests
 import subprocess
+import emoji
 from dotenv import load_dotenv
 
 # 页面设置
@@ -21,12 +22,6 @@ CITY_MAP = {
     "天津": "Tianjin", "武汉": "Wuhan", "成都": "Chengdu", "长沙": "Changsha"
 }
 
-SEASONAL_FOODS = {
-    "cold": ["羊肉炖萝卜", "红枣枸杞汤", "生姜鸡汤", "牛肉粥"],
-    "hot": ["绿豆汤", "凉拌黄瓜", "番茄鸡蛋冷面", "西瓜沙拉"],
-    "rain": ["山药排骨汤", "茯苓薏米粥", "陈皮鸭", "冬瓜汤"],
-    "mild": ["清炒时蔬", "蒸南瓜", "香菇滑鸡", "玉米排骨汤"]
-}
 
 # 清理文本
 def clean_text(text):
@@ -40,15 +35,34 @@ def clean_text(text):
     text = text.replace("✅ Chef助手回答：", "")
     return text.strip()
 
-# 关键词提取（用于视频推荐）
-def extract_keywords(text):
-    keywords = ["营养", "饮食", "食谱", "蔬菜", "低脂", "健康", "高蛋白", "低碳水", "减脂", "三高", "糖尿病", "早餐", "午餐", "晚餐"]
-    found = set()
-    for line in text.splitlines():
-        for word in keywords:
-            if word in line:
-                found.add(word)
-    return list(found)[:3] or ["健康饮食"]
+# 提取 AI 回复中的 Recipe Suggestion 段落内容
+def extract_recipe_suggestion_section(full_text):
+    pattern = r"\*\*Recipe Suggestion\*\*(.*?)\n\s*\n"
+    match = re.search(pattern, full_text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return full_text  # 如果找不到段落，就退回用全文
+
+
+# 只提取类似“lemon garlic salmon”风格的菜名短语
+def extract_keywords_from_recipe(recipe_text):
+    lines = recipe_text.splitlines()
+    dish_keywords = []
+
+    for line in lines:
+        line = line.strip()
+        # 匹配以大写字母开头的短语（常见于英文菜名）
+        matches = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})\b", line)
+        for match in matches:
+            match_clean = match.strip()
+            if match_clean.lower() not in ['try', 'this', 'that', 'these', 'those', 'here', 'there', 'it']:
+                dish_keywords.append(match_clean)
+
+    return list(dict.fromkeys(dish_keywords))[:3] or ["Healthy Recipe"]
+
+def remove_emojis(text):
+    return emoji.replace_emoji(text, replace='')
+
 
 # 视频推荐
 def recommend_youtube_videos(query, max_results=3):
@@ -62,6 +76,7 @@ def recommend_youtube_videos(query, max_results=3):
             link = f"https://www.youtube.com/watch?v={video_id}"
             videos.append((title, link))
     return videos
+
 
 # 获取天气
 def get_weather(city_name, is_zh=True):
@@ -77,9 +92,16 @@ def get_weather(city_name, is_zh=True):
     except:
         return "❌ 天气获取失败", "mild"
 
+
+# 分类天气
 # 分类天气
 def categorize_weather(condition, temp):
     condition = condition.lower()
+    try:
+        temp = int(temp)  # 确保 temp 是整数类型
+    except ValueError:
+        temp = 0  # 如果 temp 不能转换为整数，设置为默认值 0
+
     if "rain" in condition or "雨" in condition:
         return "rain"
     elif temp <= 10:
@@ -89,14 +111,49 @@ def categorize_weather(condition, temp):
     else:
         return "mild"
 
+
 # 展示天气和推荐
-def display_weather_and_recipes(city_name, is_zh=True):
-    st.markdown("## 🌦 当前天气与时令推荐")
-    weather_str, weather_type = get_weather(city_name, is_zh)
-    st.info(f"📍 {city_name} 当前天气：{weather_str}")
-    st.markdown("🍽️ 推荐以下适合当前天气的时令菜：")
-    for dish in SEASONAL_FOODS.get(weather_type, []):
-        st.markdown(f"- {dish}")
+def display_weather_only(city_name, is_zh=True):
+    # 根据语言切换天气提示文本
+    weather_title = "🌦 当前天气" if is_zh else "🌦 Current Weather"
+    weather_info = f"📍 {city_name} 当前天气：" if is_zh else f"📍 {city_name} Current weather:"
+
+    # 显示标题和天气
+    st.markdown(f"## {weather_title}")
+    condition, temp = get_weather(city_name, is_zh)
+    st.info(f"{weather_info} {condition}")
+
+    # 小贴士提示
+    tip_map = {
+        "rain": "🌧️ 雨天湿气重，别忘了喝点热汤，保持身体温暖哦～" if is_zh else "🌧️ Rainy day! Stay warm and drink some hot soup to keep the moisture away.",
+        "cold": "❄️ 天气寒冷，记得进补，多吃温热食物增强抵抗力～" if is_zh else "❄️ It's chilly! Warm up with nourishing foods to boost immunity.",
+        "hot": "☀️ 天气炎热，注意补水，多吃些清爽蔬果更舒服～" if is_zh else "☀️ Hot weather today! Stay hydrated and eat more refreshing fruits and veggies.",
+        "mild": "🌤️ 天气舒适，饭后不妨散散步，有助消化也有好心情～" if is_zh else "🌤️ Nice weather! How about a relaxing walk after your meal to aid digestion?"
+    }
+    _, weather_type = get_weather(city_name, is_zh)
+    st.success(
+        tip_map.get(weather_type, "🍽️ 保持好心情，吃顿开心饭！" if is_zh else "🍽️ Enjoy your meal and stay cheerful!"))
+
+
+# 获取天气信息并将其传递到prompt中
+def get_weather_info(city_name, is_zh=True):
+    condition, temp = get_weather(city_name, is_zh)
+    weather_type = categorize_weather(condition, temp)
+
+    # 小贴士提示
+    tip_map = {
+        "rain": "🌧️ 雨天湿气重，别忘了喝点热汤，保持身体温暖哦～" if is_zh else "🌧️ Rainy day! Stay warm and drink some hot soup to keep the moisture away.",
+        "cold": "❄️ 天气寒冷，记得进补，多吃温热食物增强抵抗力～" if is_zh else "❄️ It's chilly! Warm up with nourishing foods to boost immunity.",
+        "hot": "☀️ 天气炎热，注意补水，多吃些清爽蔬果更舒服～" if is_zh else "☀️ Hot weather today! Stay hydrated and eat more refreshing fruits and veggies.",
+        "mild": "🌤️ 天气舒适，饭后不妨散散步，有助消化也有好心情～" if is_zh else "🌤️ Nice weather! How about a relaxing walk after your meal to aid digestion?"
+    }
+
+    # 获取天气建议
+    weather_tip = tip_map.get(weather_type,
+        "🍽️ 保持好心情，吃顿开心饭！" if is_zh else "🍽️ Enjoy your meal and stay cheerful!")
+
+    return f"当前天气：{condition}, {temp}°C", weather_tip
+
 
 # 多语言支持
 language = st.selectbox("🌐 Language / 语言", ["中文", "English"])
@@ -104,9 +161,9 @@ is_zh = language == "中文"
 
 T = {
     "title": "🍽️ SmartChef 智能厨神助手" if is_zh else "🍽️ SmartChef: AI Cooking Assistant",
-    "city": "📍 你所在的城市（可中文）" if is_zh else "📍 Your city (in Chinese or English)",
+    "city": "📍 你所在的城市" if is_zh else "📍 Your city (in Chinese or English)",
     "ingredients": "🍅 你今天有哪些食材呢？（逗号分隔）" if is_zh else "🍅 What ingredients do you have? (comma-separated)",
-    "diet": "🥗 有没有饮食偏好（可选）？" if is_zh else "🥗 Any dietary preference (optional)?",
+    "diet": "🥗 有没有饮食偏好？" if is_zh else "🥗 Any dietary preference ?",
     "goal": "🎯 你今天的健康目标是？" if is_zh else "🎯 What's your health goal today?",
     "btn": "👨‍🍳 生成饮食建议" if is_zh else "👨‍🍳 Generate Cooking Advice",
     "answer": "✅ Chef助手回答：" if is_zh else "✅ Chef Assistant's reply:",
@@ -119,11 +176,12 @@ T = {
 
 # 标题与城市输入
 st.title(T["title"])
-city_name = st.text_input(T["city"], value="上海")
-display_weather_and_recipes(city_name, is_zh)
+city_name = st.text_input(T["city"], value="Sydney")
+display_weather_only(city_name, is_zh)
+weather_str, weather_tip = get_weather_info(city_name, is_zh)
 
 # 主输入区
-ingredients = st.text_area(T["ingredients"], placeholder="e.g. 鸡胸肉, 西兰花, 洋葱")
+ingredients = st.text_area(T["ingredients"], placeholder="e.g. 鸡胸肉, 西兰花, 洋葱" if is_zh else "e.g. Chicken breast, broccoli, onion")
 col1, col2 = st.columns(2)
 diet = col1.text_input(T["diet"], placeholder="如：低碳、高蛋白、素食" if is_zh else "e.g. low-carb, high-protein")
 goal = col2.text_input(T["goal"], placeholder="如：减脂、健身恢复" if is_zh else "e.g. fat loss, muscle gain")
@@ -131,23 +189,36 @@ goal = col2.text_input(T["goal"], placeholder="如：减脂、健身恢复" if i
 # 生成建议
 if st.button(T["btn"]):
     prompt = f"""
-我今天的食材是：{ingredients}
-饮食偏好：{diet}
-健康目标：{goal}
+    城市：{city_name}
+    天气：{weather_str} | {weather_tip}
+    我今天的食材是：{ingredients}
+    饮食偏好：{diet}
+    健康目标：{goal}
 
-请你作为营养顾问“Chef助手”，语气轻松温暖、俏皮有趣但专业，结合以上内容，帮我生成：
-1️⃣ 推荐食谱（Recipe Suggestion）
-请根据食材、饮食偏好和健康目标，推荐 1~2 个适合的菜品，并附上详细且有食欲的描述（如风味、口感、适合人群等）。
-2️⃣ 营养价值解析（Nutritional Insight）
-对推荐菜品的营养组成进行简要解释，比如蛋白质、碳水、脂肪、纤维、维生素等含量及其健康益处，突出与健康目标（如减脂/增肌）之间的关系。
-3️⃣ 个性化搭配建议（Smart Pairing Tips）
-在已有食材基础上，推荐额外可以搭配的小食材或调味品，让菜品更均衡或更美味，例如“加点橄榄油会更润”、“再加点魔芋能增强饱腹感”。
-4️⃣ 饮食误区与实用提醒（Common Pitfalls & Tips）
-温馨提醒用户可能会忽略的饮食误区，例如“别忘了控制酱料用量”、“晚餐别太晚吃”、“燕麦虽好，但加糖太多就失效了”等。
-5️⃣ 关怀鼓励话语（Encouragement & Support）
-用轻松愉快又带点人情味的语言，对用户进行积极反馈与心理支持，例如：“已经很棒啦～营养搭配这种事，一点点优化就会有大不同！”、“记得吃饭要开心，心情好才是最好的调味料～”
+    As your nutrition advisor, “Chef Assistant,” I’ll provide recommendations in a light, warm, playful yet professional tone, tailored to your city's weather conditions:
 
-"""
+    1️⃣ **Recipe Suggestion**  
+    Based on the ingredients, dietary preferences, and health goals mentioned above, I’ll recommend 1–2 dishes that perfectly match your needs. I’ll provide an incredibly tempting description to help you understand their flavor, texture, and who they’re best suited for.
+
+    2️⃣ **Recipe Steps**  
+    In addition to recommending dishes, I’ll provide a step-by-step cooking guide. From chopping the ingredients to plating the final dish, I’ll include the exact grams of each ingredient and what to do at every stage (including spices and side dishes) to make the process simple, so you can enjoy cooking effortlessly.
+
+    3️⃣ **Seasonal Dish Suggestions**  
+    Based on your city’s weather and climate, I’ll recommend seasonal dishes that align with the city’s characteristics and seasonal changes. Whether it's the refreshing summer dishes or hearty winter meals, I’ll suggest the best dishes to match your seasonal cravings!
+
+    4️⃣ **Nutritional Insight**  
+    I’ll provide a brief nutritional breakdown of the recommended dishes, detailing their protein, carbohydrates, fats, fibers, and vitamins. I’ll also explain how these nutrients benefit your health and emphasize how they help you achieve your health goals, such as fat loss or muscle gain.
+
+    5️⃣ **Smart Pairing Tips**  
+    Based on the ingredients you currently have, I’ll offer additional tips to pair them with other ingredients or spices to make the dish more balanced and flavorful. For example, “Adding olive oil will increase smoothness,” or “Adding konjac can enhance satiety.
+
+    6️⃣ **Common Pitfalls & Tips**  
+    I’ll gently remind you of common dietary pitfalls, such as “Don’t forget to control the amount of sauce,” “Try not to eat too late at night,” or “Oats are great, but too much sugar will negate their health benefits.” These small tips will help you better control your diet and achieve your health goals.
+
+    7️⃣ **Encouragement & Support**  
+    You’re already doing great! Nutritional balancing is an ongoing process, and each small adjustment leads to bigger changes. Remember, eating is not just about health—it’s about enjoying life, and a good mood is the best seasoning! Keep it up, and together we’ll head towards a healthier version of yourself!
+    """
+
     r = requests.post(
         "https://api.deepseek.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
@@ -160,21 +231,42 @@ if st.button(T["btn"]):
         st.error("❌ Chef助手暂时没能生成建议，请检查API密钥或网络")
 
 # 输出 + 视频 + 朗读
+# Add translated content for reading section in T dictionary
+T_reading = {
+    "chef_result_title": "### ✅ Chef助手给你的建议：" if is_zh else "### ✅ Chef Assistant's suggestions:",
+    "start_reading_button": "🔊 开始朗读" if is_zh else "🔊 Start Reading",
+    "stop_reading_button": "🛑 停止朗读" if is_zh else "🛑 Stop Reading"
+}
+
 if "chef_result" in st.session_state:
-    st.markdown("### ✅ Chef助手给你的建议：")
+    st.markdown(T_reading["chef_result_title"])
     st.write(st.session_state["chef_result"])
 
-    with st.expander("🗣️ 朗读这段建议", expanded=True):
-        rate = st.slider("语速调节", 120, 240, 160, step=10)
+    with st.expander("🗣️ 朗读这段建议"if is_zh else 'Read this suggestion out loud', expanded=True):
+        rate = st.slider("语速调节"if is_zh else 'Speed Control', 120, 240, 160, step=10)
         colr1, colr2 = st.columns(2)
-        if colr1.button("🔊 开始朗读"):
-            subprocess.Popen(["say", "-r", str(rate), st.session_state["chef_result"]])
-        if colr2.button("🛑 停止朗读"):
+
+        if colr1.button(T_reading["start_reading_button"]):
+            clean_for_speech = remove_emojis(st.session_state["chef_result"])
+            subprocess.Popen(["say", "-r", str(rate), clean_for_speech])
+
+        if colr2.button(T_reading["stop_reading_button"]):
             subprocess.run(["killall", "say"])
 
     st.markdown(f"### {T['video_title']}")
-    query = " ".join(extract_keywords(st.session_state["chef_result"]))
+
+    # 提取 Recipe Suggestion 部分
+    suggestion_text = extract_recipe_suggestion_section(st.session_state["chef_result"])
+
+    # 从中提取菜名作为搜索关键词
+    query = " ".join(extract_keywords_from_recipe(suggestion_text))
+
+    # （可选调试）展示提取结果
+    st.write("🎯 视频搜索关键词："if is_zh else 'Video search keywords:', query)
+
+    # 根据菜名搜索视频
     videos = recommend_youtube_videos(query)
+
     if videos:
         for title, link in videos:
             st.markdown(f"- [{title}]({link})")
